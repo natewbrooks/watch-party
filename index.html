@@ -1,0 +1,304 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>watch</title>
+<style>
+:root{--bg:#18181a;--panel:#202024;--line:#2e2e34;--text:#e4e4e7;--dim:#8b8b94;--accent:#7c6cff;--talk:#3ddc84}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;height:100vh;display:flex;flex-direction:column;background:var(--bg);color:var(--text);font:14px system-ui,sans-serif}
+button,select,input{font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 12px;outline:none}
+button{cursor:pointer;transition:border-color .15s,filter .15s}
+button:hover{border-color:var(--accent)}
+input:focus,select:focus{border-color:var(--accent)}
+#bar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--line)}
+#share,#go{background:var(--accent);border:0;font-weight:600}
+#share:hover,#go:hover{filter:brightness(1.15)}
+#share.on{background:#e5484d}
+#go{position:fixed;inset:0;margin:auto;width:max-content;height:max-content;font-size:30px;padding:18px 60px;border-radius:999px;box-shadow:0 10px 40px #7c6cff55}
+#gear{margin-left:auto;font-size:16px;padding:5px 10px}
+#settings{inset:auto;top:56px;right:12px;margin:0;width:340px;padding:14px 14px 2px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:12px;box-shadow:0 12px 40px #0008}
+#settings label{display:block;font-size:12px;color:var(--dim);margin-bottom:6px}
+#settings .row{display:flex;gap:6px;margin-bottom:12px}
+#settings .row>input,#settings .row>select{flex:1;min-width:0}
+#link{color:var(--dim)}
+#settings .check{display:flex;align-items:center;gap:8px;color:var(--text);font-size:13px;margin-bottom:12px;cursor:pointer}
+#monitor{padding:0;accent-color:var(--accent)}
+input[type=range]{padding:0;border:0;background:none;accent-color:var(--accent)}
+#settings label span{float:right;color:var(--text)}
+/* volume lives in settings sliders (gain can go past 100%), native one would double the audio */
+video::-webkit-media-controls-mute-button,video::-webkit-media-controls-volume-slider{display:none}
+#msg{color:var(--dim);font-size:13px}
+.av{width:34px;height:34px;flex:none;display:grid;place-items:center;border-radius:50%;background:var(--panel);border:2px solid var(--line);font-size:11px;color:var(--dim);transition:border-color .15s,box-shadow .15s,color .15s}
+.av.on{border-color:var(--talk);color:var(--text);box-shadow:0 0 0 3px #3ddc8433,0 0 14px #3ddc8488}
+.av{cursor:pointer}
+.av.muted{border-color:#e5484d;background:linear-gradient(to top right,transparent 45%,#e5484d 45% 55%,transparent 55%),var(--panel)}
+main{flex:1;display:flex;min-height:0}
+video{flex:1;min-width:0;background:#000}
+#toggle{width:30px;padding:10px 0;border:0;border-left:1px solid var(--line);border-radius:0;background:var(--panel);color:var(--text);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+#toggle:hover{background:var(--accent)}
+#toggle b{font-size:22px;line-height:1;transition:transform .25s}
+#toggle span{writing-mode:vertical-rl;font-size:11px;letter-spacing:.2em;font-weight:600}
+main:has(#chat.closed) #toggle b{transform:rotate(180deg)}
+/* width shrinks from the left, fixed-width inner slides off to the right */
+#chat{width:300px;overflow:hidden;background:var(--panel);transition:width .25s ease}
+#chat.closed{width:0}
+#chat>div{width:300px;height:100%;display:flex;flex-direction:column}
+#chat h3{margin:0;padding:12px 14px;font-size:13px;font-weight:600;color:var(--dim);border-bottom:1px solid var(--line)}
+#log{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:6px}
+.m{max-width:80%;padding:7px 11px;border-radius:14px 14px 14px 4px;background:var(--line);align-self:flex-start;white-space:pre-wrap;word-break:break-word;line-height:1.35}
+.m.mine{align-self:flex-end;background:var(--accent);border-radius:14px 14px 4px 14px}
+#chatIn{margin:10px;border-radius:999px;padding:9px 14px}
+</style>
+<div id="bar">
+  <span id="me" class="av" title="Click to mute your mic">me</span><span id="them" class="av" title="Click to mute them">them</span>
+  <button id="share" hidden>Share</button> <span id="msg"></span>
+  <button id="gear" popovertarget="settings">⚙</button>
+</div>
+<!-- native popover: top layer overlay, closes on outside click or Esc -->
+<div id="settings" popover>
+  <div id="hostOnly"><label>Invite link</label><div class="row"><input id="link" readonly placeholder="Click Start first" onclick="this.select()"><button onclick="navigator.clipboard.writeText(link.value)">Copy</button></div></div>
+  <label>Microphone</label><div class="row"><select id="mics"></select></div>
+  <label>Their voice <span id="voiceOut">100%</span></label><div class="row"><input type="range" id="voiceVol" min="0" max="300" value="100"></div>
+  <label>Screen audio <span id="screenOut">100%</span></label><div class="row"><input type="range" id="screenVol" min="0" max="300" value="100"></div>
+  <label class="check"><input type="checkbox" id="monitor"> Hear what they hear (mutes them, use headphones)</label>
+</div>
+<button id="go"></button>
+<!-- native video fullscreen shows only the video, so bar and chat hide themselves -->
+<main>
+  <video id="v" autoplay playsinline controls muted></video>
+  <button id="toggle" title="Show/hide chat"><b>›</b><span>CHAT</span></button>
+  <aside id="chat"><div><h3>Chat</h3><div id="log"></div><input id="chatIn" placeholder="Message..."></div></aside>
+</main>
+<audio id="a" autoplay muted></audio>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+const hostId = new URLSearchParams(location.search).get('h')
+const say = t => msg.textContent = t
+// stereo, high bitrate opus for tab audio
+const stereo = sdp => sdp.replace('useinbandfec=1', 'useinbandfec=1;stereo=1;maxaveragebitrate=256000')
+go.textContent = hostId ? 'JOIN' : 'START'
+hostOnly.hidden = !!hostId
+let ac, an, micSrc, peer, m, conn, voice, myScreen, tabSrc, outCall, inCall, voiceGain, screenGain, voiceSrc, inSrc
+
+/** Gains allow >100%. Monitor mode silences them. */
+const vol = () => {
+  voiceOut.textContent = voiceVol.value + '%'
+  screenOut.textContent = screenVol.value + '%'
+  if (!ac) return
+  voiceGain.gain.value = monitor.checked || them.classList.contains('muted') ? 0 : voiceVol.value / 100
+  screenGain.gain.value = monitor.checked && !myScreen ? 0 : screenVol.value / 100
+}
+voiceVol.oninput = screenVol.oninput = vol
+
+/** Swaps in a mic by device id, refreshes the picker (labels only exist after permission), routes it to the talk meter. */
+const useMic = async id => {
+  const s = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: id ? { exact: id } : undefined, echoCancellation: true, noiseSuppression: true } })
+  s.getAudioTracks()[0].enabled = !me.classList.contains('muted')
+  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind == 'audioinput')
+  mics.replaceChildren(...devs.map(d => new Option(d.label, d.deviceId)))
+  mics.value = s.getAudioTracks()[0].getSettings().deviceId
+  micSrc?.mediaStream.getTracks().forEach(t => t.stop())
+  micSrc?.disconnect()
+  micSrc = ac.createMediaStreamSource(s)
+  micSrc.connect(an)
+  if (monitor.checked) micSrc.connect(ac.destination)
+  return s
+}
+
+/** Lights own bubble while mic is loud, tells the peer so theirs lights too. */
+const meter = () => {
+  an = ac.createAnalyser()
+  const buf = new Uint8Array(an.fftSize)
+  let was = false
+  setInterval(() => {
+    an.getByteTimeDomainData(buf)
+    // ponytail: fixed threshold (128 = silence), tune if it flickers or misses quiet talk
+    const talk = Math.max(...buf) > 140
+    if (talk == was) return
+    was = talk
+    me.classList.toggle('on', talk)
+    if (conn?.open) conn.send({ talk })
+  }, 100)
+}
+
+const add = (t, mine) => {
+  const line = document.createElement('div')
+  line.className = mine ? 'm mine' : 'm'
+  line.textContent = t
+  log.append(line)
+  log.scrollTop = log.scrollHeight
+}
+
+const clearIncoming = () => {
+  inCall?.close()
+  inCall = null
+  inSrc?.disconnect()
+  inSrc = null
+  if (!myScreen) v.srcObject = null
+}
+
+/** Data channel carries chat, talk state and share stops. */
+const wire = c => {
+  conn = c
+  c.on('data', d => {
+    if (d.text) add(d.text)
+    if (d.talk != null) them.classList.toggle('on', d.talk)
+    if (d.sharing == false) clearIncoming()
+    if (d.media && myScreen) control(d.media)
+  })
+}
+
+/** Play/pause sync. Sharer forwards to the captured tab via the extension, viewer forwards to the sharer. */
+const control = cmd => {
+  if (!myScreen) return conn?.open && conn.send({ media: cmd })
+  const tab = myScreen.getVideoTracks()[0].getCaptureHandle?.()?.handle
+  if (tab) postMessage({ watchMedia: { cmd, tab } })
+  else say(cmd + ' requested, install the extension and reload the shared tab to sync')
+}
+
+// user clicks only, not autoplay from new streams
+for (const type of ['play', 'pause']) v.addEventListener(type, () => navigator.userActivation.isActive && control(type))
+
+const onVoice = c => {
+  voice = c
+  c.on('stream', s => {
+    // a stays muted, Chrome only feeds remote audio to WebAudio while an element plays it
+    a.srcObject = s
+    voiceSrc?.disconnect()
+    voiceSrc = ac.createMediaStreamSource(s)
+    voiceSrc.connect(voiceGain)
+    say('connected')
+  })
+}
+
+/** Screen gets its own call so either side can start/stop without renegotiating (PeerJS can't). */
+const sendScreen = () => {
+  outCall?.close()
+  outCall = peer.call(conn.peer, myScreen, { metadata: 'screen' })
+  const pc = outCall.peerConnection
+  pc.addEventListener('connectionstatechange', () => {
+    if (pc.connectionState != 'connected') return
+    for (const sender of pc.getSenders()) {
+      const p = sender.getParameters()
+      if (sender.track?.kind == 'video' && p.encodings[0]) {
+        p.encodings[0].maxBitrate = 8e6
+        sender.setParameters(p)
+      }
+    }
+  })
+}
+
+const stopShare = () => {
+  if (!myScreen) return
+  myScreen.getTracks().forEach(t => t.stop())
+  tabSrc?.disconnect()
+  outCall?.close()
+  myScreen = tabSrc = outCall = null
+  v.srcObject = null
+  share.textContent = 'Share'
+  share.classList.remove('on')
+  vol()
+  if (conn?.open) conn.send({ sharing: false })
+}
+
+toggle.onclick = () => chat.classList.toggle('closed')
+
+// click bubbles: mute own mic (disabled track sends silence) or mute them locally
+me.onclick = () => {
+  me.classList.toggle('muted')
+  m?.getAudioTracks().forEach(t => t.enabled = !me.classList.contains('muted'))
+}
+them.onclick = () => {
+  them.classList.toggle('muted')
+  vol()
+}
+
+chatIn.onkeydown = e => {
+  if (e.key != 'Enter' || !chatIn.value) return
+  if (!conn?.open) return say('chat not connected yet')
+  conn.send({ text: chatIn.value })
+  add(chatIn.value, true)
+  chatIn.value = ''
+}
+
+// test mode: hear own mic like they do, mute them
+monitor.onchange = () => {
+  const on = monitor.checked
+  vol()
+  if (micSrc && on) micSrc.connect(ac.destination)
+  if (micSrc && !on) micSrc.disconnect(ac.destination)
+}
+
+share.onclick = async () => {
+  if (myScreen) return stopShare()
+  // mute source tab, play it from this page instead so echo cancellation can strip it from the mic
+  const s = await navigator.mediaDevices.getDisplayMedia({ video: { width: 1920, height: 1080, frameRate: 30 }, audio: { suppressLocalAudioPlayback: true }, selfBrowserSurface: 'exclude' })
+  // one sharer at a time, theirs stops when my call lands
+  clearIncoming()
+  myScreen = s
+  vol()
+  if (s.getAudioTracks().length) {
+    tabSrc = ac.createMediaStreamSource(s)
+    tabSrc.connect(screenGain)
+  } else say('no source audio, only tabs with "Share tab audio" have sound')
+  // Chrome's own "Stop sharing" bar
+  s.getVideoTracks()[0].onended = stopShare
+  v.srcObject = s
+  share.textContent = 'Stop sharing'
+  share.classList.add('on')
+  if (conn) sendScreen()
+}
+
+go.onclick = async () => {
+  // before any await so it isn't created suspended
+  ac = new AudioContext()
+  voiceGain = ac.createGain()
+  screenGain = ac.createGain()
+  voiceGain.connect(ac.destination)
+  screenGain.connect(ac.destination)
+  vol()
+  go.hidden = true
+  say(hostId ? 'connecting...' : 'starting...')
+  meter()
+  m = await useMic()
+  mics.onchange = async () => {
+    m = await useMic(mics.value)
+    voice?.peerConnection.getSenders().find(s => s.track?.kind == 'audio')?.replaceTrack(m.getAudioTracks()[0])
+  }
+  share.hidden = false
+  peer = new Peer()
+  peer.on('error', e => say(e.type == 'peer-unavailable' ? 'not live yet, reload in a bit' : e.type))
+  peer.on('call', c => {
+    if (c.metadata != 'screen') {
+      c.answer(m)
+      return onVoice(c)
+    }
+    stopShare()
+    inCall?.close()
+    inCall = c
+    c.answer(undefined, { sdpTransform: stereo })
+    // fires once per track, so replace rather than stack sources
+    c.on('stream', s => {
+      v.srcObject = s
+      inSrc?.disconnect()
+      inSrc = null
+      if (!s.getAudioTracks().length) return
+      inSrc = ac.createMediaStreamSource(s)
+      inSrc.connect(screenGain)
+    })
+  })
+  if (hostId) return peer.on('open', () => wire(peer.connect(hostId)))
+  peer.on('open', id => {
+    link.value = location.href.split('?')[0] + '?h=' + id
+    settings.showPopover()
+    say('live, invite link in ⚙')
+  })
+  // one friend at a time, a reload replaces the dead connection. Host places the voice call.
+  peer.on('connection', c => {
+    if (conn?.open) return c.close()
+    wire(c)
+    onVoice(peer.call(c.peer, m, { metadata: 'voice' }))
+    if (myScreen) sendScreen()
+  })
+}
+</script>

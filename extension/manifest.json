@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "watch remote",
+  "version": "1",
+  "background": { "service_worker": "bg.js" },
+  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"], "all_frames": true }]
+}
